@@ -1,8 +1,8 @@
 #![allow(dead_code)]
-use std::{collections::{HashMap, HashSet}, fs::File, io::Read, path::Path};
+use std::{collections::{HashMap, HashSet}, fs::File, io::{BufRead, BufReader, Read}, path::Path};
 
 use rust_stemmers::{Algorithm, Stemmer};
-use clap::Parser;
+use clap::{builder::Str, Parser};
 use colored::Colorize;
 use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 
@@ -58,19 +58,22 @@ fn stem_and_compare(stemmer: &Stemmer, str1: &str, strvec: &Vec<String>) -> bool
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
-    /// Least amount of words required
-    #[arg(short, long)]
+    /// Наименьшее число повторов слова
+    #[arg(short, long, default_value_t = 2)]
     words: usize,
-    /// Least amount of files containing particular word
-    #[arg(short, long)]
+    /// Наименьшее число файлов, содержащих слово
+    #[arg(short, long, default_value_t = 2)]
     filenum: usize,
-    /// Minimal word length
-    #[arg(short, long)]
+    /// Наименьшая длина слова
+    #[arg(short, long, default_value_t = 6)]
     length: usize,
-    /// Words to exclude
+    /// Слова, которые следует исключить из выдачи
     #[arg(short, long)]
-    exclude: Vec<String>,
-    /// Files to process
+    exclude: Option<Vec<String>>,
+    /// Файл со списком слов для исключения из выдачи
+    #[arg(short='E', long)]
+    exclude_file: Option<String>,
+    /// Входные файлы
     filenames: Vec<String>,
 }
 
@@ -79,6 +82,22 @@ fn main() {
     let ru_stemmer = Stemmer::create(Algorithm::Russian);
     let en_stemmer = Stemmer::create(Algorithm::English);
     let args = Cli::parse();
+
+    let mut exclude: Vec<String> = vec![];
+
+    if let Some(filepath) = args.exclude_file {
+        let exclude_filepath = Path::new(&filepath);
+        match File::open(exclude_filepath) {
+            Ok(f) => exclude.append(&mut BufReader::new(f).lines()
+                                                  .filter_map(|x| x.ok())
+                                                  .collect::<Vec<String>>()),
+            Err(e) => eprintln!("--exclude-file: Ошибка при открытии файла {}: {e}", exclude_filepath.display()),
+        };
+    }
+
+    if let Some(mut exclude_entries) = args.exclude {
+        exclude.append(&mut exclude_entries);
+    }
 
     let mut ru_dict = Dict::new();
     let mut en_dict = Dict::new();
@@ -116,12 +135,11 @@ fn main() {
                            .map(|word| word.to_string())
                            .collect::<Vec<String>>();
 
-            // dbg!(&words);
             for w in &words {
                 if !w.is_ascii() {
                     let stem = ru_stemmer.stem(&w).to_string();
 
-                    if stem_and_compare(&ru_stemmer, w, &args.exclude) {
+                    if stem_and_compare(&ru_stemmer, w, &exclude) {
                         continue;
                     }
 
@@ -138,7 +156,7 @@ fn main() {
                 if w.is_ascii() {
                     let stem = en_stemmer.stem(&w).to_string();
 
-                    if stem_and_compare(&en_stemmer, w, &args.exclude) {
+                    if stem_and_compare(&en_stemmer, w, &exclude) {
                         continue;
                     }
 
